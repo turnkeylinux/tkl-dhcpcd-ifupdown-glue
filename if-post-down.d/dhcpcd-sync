@@ -27,12 +27,20 @@ if [[ "$IFACE" == "lo" ]]; then
 elif [[ -z "$IFACE" ]]; then
     _warn "IFACE is empty - refusing to touch dhcpcd.conf"
     exit 0
+elif [[ "$IFACE" == "--all" ]]; then
+    # read all eth, wifi and bridge interfaces from interfaces file
+    mapfile -t ifaces \
+        <<<"$(awk '/^iface [ewb]/ {print $2}' /etc/network/interfaces | uniq)"
+else
+    ifaces=("$IFACE")
 fi
 
 for _ipv in ipv4 ipv6; do
-    $update_dhcpcd_conf remove-deny-dhcp "$IFACE" $_ipv
+    for iface in "${ifaces[@]}"; do
+        $update_dhcpcd_conf remove-deny-dhcp "$iface" $_ipv
+    done
 done
 
-_info "if-post-down hook finished for iface: $IFACE"
+_info "if-post-down hook finished for iface/s: ${ifaces[*]}"
 
 exit 0
