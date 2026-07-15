@@ -21,31 +21,46 @@ _warn() {
     logger --tag=dhcpcd-ifupdown-glue --priority warning "$*"
 }
 
-_info "if-pre-up hook running for $IFACE"
+_info "if-pre-up hook running for iface: $IFACE"
 if [[ "$IFACE" == "lo" ]]; then
     _info "nothing to do for 'lo'"
     exit 0
+elif [[ -z "$IFACE" ]]; then
+    _warn "IFACE is empty - refusing to touch dhcpcd.conf"
+    exit 0
+elif [[ "$IFACE" == "--all" ]]; then
+    # read all eth, wifi and bridge interfaces from interfaces file
+    mapfile -t ifaces \
+        <<<"$(awk '/^iface [ewb]/ {print $2}' /etc/network/interfaces | uniq)"
+else
+    ifaces=("$IFACE")
 fi
 
 for _inet in inet inet6; do
     [[ "$_inet" == "inet" ]] && _ipv=ipv4 || _ipv=ipv6
-    iface_mode="$( \
-        sed -En "s|^iface $IFACE $_inet ([a-z]+)|\1|p" "$ifaces_file" \
-        | head -1)"
-    if [[ -z "$iface_mode" ]]; then
-        _warn "No $_ipv iface mode info found for $IFACE"
-        if [[ "$_ipv" == "ipv6" ]]; then
-            # only auto disable for IPv6
-            _warn "Assuming IPv6 DHCP should be disabled for $IFACE"
-            $update_dhcpcd_conf add-deny-dhcp "$IFACE" "$_ipv"
+    for iface in "${ifaces[@]}"; do
+        iface_mode="$( \
+            sed -En "s|^iface $iface $_inet ([a-z]+)|\1|p" "$ifaces_file" \
+            | head -1)"
+        if [[ -z "$iface_mode" ]]; then
+            _warn "No $_ipv iface mode info found for $iface"
+            if [[ "$_ipv" == "ipv6" ]]; then
+                # only auto disable for IPv6
+                _warn "Assuming IPv6 DHCP should be disabled for $iface"
+                # defensively ensure config isn't added twice
+                $update_dhcpcd_conf remove-deny-dhcp "$iface" "$_ipv"
+                $update_dhcpcd_conf add-deny-dhcp "$iface" "$_ipv"
+            fi
+        elif [[ "$iface_mode" == "dhcp" ]]; then
+            $update_dhcpcd_conf remove-deny-dhcp "$iface" "$_ipv"
+        else
+            # defensively ensure config isn't added twice
+            $update_dhcpcd_conf remove-deny-dhcp "$iface" "$_ipv"
+            $update_dhcpcd_conf add-deny-dhcp "$iface" "$_ipv"
         fi
-    elif [[ "$iface_mode" == "dhcp" ]]; then
-        $update_dhcpcd_conf remove-deny-dhcp "$IFACE" "$_ipv"
-    else
-        $update_dhcpcd_conf add-deny-dhcp "$IFACE" "$_ipv"
-    fi
+    done
 done
 
-_info "if-pre-up hook finished for $IFACE"
+_info "if-pre-up hook finished for iface/s: ${ifaces[*]}"
 
 exit 0
